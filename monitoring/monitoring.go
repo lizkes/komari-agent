@@ -82,3 +82,92 @@ func GenerateReport() []byte {
 	}
 	return s
 }
+
+// GenerateNetworkReport 生成网络监控数据
+func GenerateNetworkReport() []byte {
+	message := ""
+	data := map[string]interface{}{}
+
+	totalUp, totalDown, networkUp, networkDown, err := monitoring.NetworkSpeed()
+	if err != nil {
+		message += fmt.Sprintf("failed to get network speed: %v\n", err)
+	}
+	data["network"] = map[string]interface{}{
+		"up":        networkUp,
+		"down":      networkDown,
+		"totalUp":   totalUp,
+		"totalDown": totalDown,
+	}
+
+	tcpCount, udpCount, err := monitoring.ConnectionsCount()
+	if err != nil {
+		message += fmt.Sprintf("failed to get connections: %v\n", err)
+	}
+	data["connections"] = map[string]interface{}{
+		"tcp": tcpCount,
+		"udp": udpCount,
+	}
+
+	data["message"] = message
+	data["type"] = "network_only"
+
+	s, err := json.Marshal(data)
+	if err != nil {
+		log.Println("Failed to marshal network data:", err)
+	}
+	return s
+}
+
+// GenerateGeneralReport 生成常规监控数据（排除网络）
+func GenerateGeneralReport() []byte {
+	message := ""
+	data := map[string]interface{}{}
+
+	cpu := monitoring.Cpu()
+	cpuUsage := cpu.CPUUsage
+	if cpuUsage <= 0.001 {
+		cpuUsage = 0.001
+	}
+	data["cpu"] = map[string]interface{}{
+		"usage": cpuUsage,
+	}
+
+	ram := monitoring.Ram()
+	data["ram"] = map[string]interface{}{
+		"used": ram.Used,
+	}
+
+	swap := monitoring.Swap()
+	data["swap"] = map[string]interface{}{
+		"used": swap.Used,
+	}
+	load := monitoring.Load()
+	data["load"] = map[string]interface{}{
+		"load1":  load.Load1,
+		"load5":  load.Load5,
+		"load15": load.Load15,
+	}
+
+	disk := monitoring.Disk()
+	data["disk"] = map[string]interface{}{
+		"used": disk.Used,
+	}
+
+	uptime, err := monitoring.Uptime()
+	if err != nil {
+		message += fmt.Sprintf("failed to get uptime: %v\n", err)
+	}
+	data["uptime"] = uptime
+
+	processcount := monitoring.ProcessCount()
+	data["process"] = processcount
+
+	data["message"] = message
+	data["type"] = "general_only"
+
+	s, err := json.Marshal(data)
+	if err != nil {
+		log.Println("Failed to marshal general data:", err)
+	}
+	return s
+}

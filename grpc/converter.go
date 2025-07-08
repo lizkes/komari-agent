@@ -19,9 +19,15 @@ func ConvertToMonitorReport(monitoringData []byte, uuid string) (*proto.MonitorR
 		return nil, err
 	}
 
+	// 获取数据类型，默认为"report"
+	reportType := "report"
+	if dataType, ok := data["type"].(string); ok {
+		reportType = dataType
+	}
+
 	report := &proto.MonitorReport{
 		Uuid:      uuid,
-		Type:      "report",
+		Type:      reportType,
 		UpdatedAt: timestamppb.New(time.Now()),
 	}
 
@@ -39,7 +45,7 @@ func ConvertToMonitorReport(monitoringData []byte, uuid string) (*proto.MonitorR
 	// 转换内存数据
 	if ramData, ok := data["ram"].(map[string]interface{}); ok {
 		report.Ram = &proto.RamReport{
-			Total: getInt64(ramData, "total"),
+			Total: getInt64(ramData, "total"), // 如果不存在则返回0
 			Used:  getInt64(ramData, "used"),
 		}
 	}
@@ -47,7 +53,7 @@ func ConvertToMonitorReport(monitoringData []byte, uuid string) (*proto.MonitorR
 	// 转换交换分区数据
 	if swapData, ok := data["swap"].(map[string]interface{}); ok {
 		report.Swap = &proto.RamReport{
-			Total: getInt64(swapData, "total"),
+			Total: getInt64(swapData, "total"), // 如果不存在则返回0
 			Used:  getInt64(swapData, "used"),
 		}
 	}
@@ -64,7 +70,7 @@ func ConvertToMonitorReport(monitoringData []byte, uuid string) (*proto.MonitorR
 	// 转换磁盘数据
 	if diskData, ok := data["disk"].(map[string]interface{}); ok {
 		report.Disk = &proto.DiskReport{
-			Total: getInt64(diskData, "total"),
+			Total: getInt64(diskData, "total"), // 如果不存在则返回0
 			Used:  getInt64(diskData, "used"),
 		}
 	}

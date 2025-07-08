@@ -11,6 +11,7 @@ var (
 	MaxRetries          int
 	ReconnectInterval   int
 	InfoReportInterval  int
+	NetworkInterval     float64 // 新增：网络监控间隔
 	IncludeNics         string
 	ExcludeNics         string
 )

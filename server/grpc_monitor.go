@@ -50,29 +50,30 @@ func (m *GRPCMonitorManager) Start() error {
 	return nil
 }
 
-// startPeriodicReporting 启动定期上报
+// startPeriodicReporting 启动定期上报（差异化频率）
 func (m *GRPCMonitorManager) startPeriodicReporting() {
-	// 监控数据上报间隔
-	var interval float64
-	if flags.Interval <= 1 {
-		interval = 1
-	} else {
-		interval = flags.Interval - 1
-	}
+	// 网络数据定时器（每flags.NetworkInterval秒）
+	networkTicker := time.NewTicker(time.Duration(flags.NetworkInterval) * time.Second)
+	defer networkTicker.Stop()
 
-	monitorTicker := time.NewTicker(time.Duration(interval * float64(time.Second)))
-	defer monitorTicker.Stop()
+	// 常规监控数据定时器（每flags.Interval秒）
+	generalTicker := time.NewTicker(time.Duration(flags.Interval) * time.Second)
+	defer generalTicker.Stop()
 
-	// 基础信息上报间隔
+	// 基础信息上报定时器（每flags.InfoReportInterval分钟）
 	basicInfoTicker := time.NewTicker(time.Duration(flags.InfoReportInterval) * time.Minute)
 	defer basicInfoTicker.Stop()
 
 	for {
 		select {
-		case <-monitorTicker.C:
-			if err := m.sendMonitorReport(); err != nil {
-				log.Printf("发送监控报告失败: %v", err)
-				// 连接可能断开，尝试重新连接
+		case <-networkTicker.C:
+			if err := m.sendNetworkReport(); err != nil {
+				log.Printf("发送网络报告失败: %v", err)
+				m.reconnect()
+			}
+		case <-generalTicker.C:
+			if err := m.sendGeneralReport(); err != nil {
+				log.Printf("发送常规报告失败: %v", err)
 				m.reconnect()
 			}
 		case <-basicInfoTicker.C:
@@ -83,7 +84,37 @@ func (m *GRPCMonitorManager) startPeriodicReporting() {
 	}
 }
 
-// sendMonitorReport 发送监控报告
+// sendNetworkReport 发送网络监控报告
+func (m *GRPCMonitorManager) sendNetworkReport() error {
+	// 生成网络监控数据
+	networkData := monitoring.GenerateNetworkReport()
+
+	// 转换为protobuf格式
+	report, err := grpcClient.ConvertToMonitorReport(networkData, m.uuid)
+	if err != nil {
+		return err
+	}
+
+	// 发送到服务器
+	return m.client.SendMonitorReport(report)
+}
+
+// sendGeneralReport 发送常规监控报告
+func (m *GRPCMonitorManager) sendGeneralReport() error {
+	// 生成常规监控数据
+	generalData := monitoring.GenerateGeneralReport()
+
+	// 转换为protobuf格式
+	report, err := grpcClient.ConvertToMonitorReport(generalData, m.uuid)
+	if err != nil {
+		return err
+	}
+
+	// 发送到服务器
+	return m.client.SendMonitorReport(report)
+}
+
+// sendMonitorReport 发送监控报告（保留兼容性）
 func (m *GRPCMonitorManager) sendMonitorReport() error {
 	// 生成监控数据
 	monitoringData := monitoring.GenerateReport()
