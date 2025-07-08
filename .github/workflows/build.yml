@@ -11,15 +11,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        exclude:
-          - goos: windows
-            goarch: arm
-          - goos: darwin
-            goarch: 386
-          - goos: darwin
-            goarch: arm
-        goos: [windows, linux, darwin, freebsd]
-        goarch: [amd64, arm64, 386, arm]
+        goos: [windows, linux]
+        goarch: [amd64, arm64]
 
     steps:
       - name: Checkout code
