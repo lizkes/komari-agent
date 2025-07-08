@@ -1,0 +1,152 @@
+syntax = "proto3";
+
+package monitor;
+
+option go_package = "github.com/komari-monitor/komari-agent/proto";
+
+import "google/protobuf/timestamp.proto";
+
+// 监控服务定义
+service MonitorService {
+  // 双向流式监控通信
+  rpc StreamMonitor(stream MonitorRequest) returns (stream MonitorResponse);
+}
+
+// 客户端请求消息
+message MonitorRequest {
+  oneof message {
+    AuthRequest auth = 1;
+    MonitorReport report = 2;
+    PingResult ping_result = 3;
+  }
+}
+
+// 服务端响应消息
+message MonitorResponse {
+  oneof message {
+    AuthResponse auth_response = 1;
+    TaskRequest task_request = 2;
+    ErrorResponse error = 3;
+  }
+}
+
+// 认证请求
+message AuthRequest {
+  string token = 1;
+}
+
+// 认证响应
+message AuthResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// 监控报告 (对应 common.Report)
+message MonitorReport {
+  string uuid = 1;
+  CPUReport cpu = 2;
+  RamReport ram = 3;
+  RamReport swap = 4;
+  LoadReport load = 5;
+  DiskReport disk = 6;
+  NetworkReport network = 7;
+  ConnectionsReport connections = 8;
+  int64 uptime = 9;
+  int32 process = 10;
+  string message = 11;
+  string method = 12;
+  google.protobuf.Timestamp updated_at = 13;
+  string type = 14; // "report" 类型标识
+}
+
+// CPU报告
+message CPUReport {
+  string name = 1;
+  int32 cores = 2;
+  string arch = 3;
+  double usage = 4;
+}
+
+// GPU报告
+message GPUReport {
+  string name = 1;
+  double usage = 2;
+}
+
+// 内存/交换分区报告
+message RamReport {
+  int64 total = 1;
+  int64 used = 2;
+}
+
+// 负载报告
+message LoadReport {
+  double load1 = 1;
+  double load5 = 2;
+  double load15 = 3;
+}
+
+// 磁盘报告
+message DiskReport {
+  int64 total = 1;
+  int64 used = 2;
+}
+
+// 网络报告
+message NetworkReport {
+  int64 up = 1;
+  int64 down = 2;
+  int64 total_up = 3;
+  int64 total_down = 4;
+}
+
+// 连接数报告
+message ConnectionsReport {
+  int32 tcp = 1;
+  int32 udp = 2;
+}
+
+// 任务请求
+message TaskRequest {
+  oneof task {
+    TerminalTask terminal = 1;
+    ExecTask exec = 2;
+    PingTask ping = 3;
+  }
+}
+
+// 终端任务
+message TerminalTask {
+  string request_id = 1;
+  string message = 2; // "terminal"
+}
+
+// 执行任务
+message ExecTask {
+  string task_id = 1;
+  string command = 2;
+  string message = 3; // "exec"
+}
+
+// Ping任务
+message PingTask {
+  uint32 ping_task_id = 1;
+  string ping_type = 2;
+  string ping_target = 3;
+  string message = 4; // "ping"
+}
+
+// Ping结果
+message PingResult {
+  uint32 task_id = 1;
+  int32 value = 2;
+  string ping_type = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  string type = 5; // "ping_result"
+}
+
+// 错误响应
+message ErrorResponse {
+  string status = 1; // "error"
+  string error = 2;
+} 

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/komari-monitor/komari-agent/cmd/flags"
 	"github.com/komari-monitor/komari-agent/server"
@@ -32,10 +33,20 @@ var RootCmd = &cobra.Command{
 			}
 			go update.DoUpdateWorks()
 		}
-		go server.DoUploadBasicInfoWorks()
+
+		// 启动gRPC监控服务
+		monitorManager := server.NewGRPCMonitorManager()
 		for {
-			server.UpdateBasicInfo()
-			server.EstablishWebSocketConnection()
+			if err := monitorManager.Start(); err != nil {
+				log.Printf("启动gRPC监控服务失败: %v", err)
+				log.Printf("等待 %d 秒后重试...", flags.ReconnectInterval)
+				time.Sleep(time.Duration(flags.ReconnectInterval) * time.Second)
+				continue
+			}
+
+			// gRPC服务启动成功，保持运行直到出错
+			log.Println("gRPC监控服务已启动，保持运行...")
+			select {} // 阻塞主goroutine，让监控服务持续运行
 		}
 	},
 }
