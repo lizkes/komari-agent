@@ -44,10 +44,24 @@ func (m *GRPCMonitorManager) Start() error {
 		log.Printf("发送基础信息失败: %v", err)
 	}
 
+	// 启动错误监听
+	go m.startErrorMonitoring()
+
 	// 启动定期上报
 	go m.startPeriodicReporting()
 
 	return nil
+}
+
+// startErrorMonitoring 启动错误监听，处理连接断开和重连
+func (m *GRPCMonitorManager) startErrorMonitoring() {
+	for {
+		err := <-m.client.GetErrorChannel()
+		if err != nil {
+			log.Printf("gRPC连接出现错误: %v，开始重连...", err)
+			m.reconnect()
+		}
+	}
 }
 
 // startPeriodicReporting 启动定期上报（差异化频率）
@@ -69,12 +83,12 @@ func (m *GRPCMonitorManager) startPeriodicReporting() {
 		case <-networkTicker.C:
 			if err := m.sendNetworkReport(); err != nil {
 				log.Printf("发送网络报告失败: %v", err)
-				m.reconnect()
+				// 错误监听器会自动处理重连，这里不需要手动调用
 			}
 		case <-generalTicker.C:
 			if err := m.sendGeneralReport(); err != nil {
 				log.Printf("发送常规报告失败: %v", err)
-				m.reconnect()
+				// 错误监听器会自动处理重连，这里不需要手动调用
 			}
 		case <-basicInfoTicker.C:
 			if err := m.sendBasicInfo(); err != nil {
@@ -166,6 +180,10 @@ func (m *GRPCMonitorManager) reconnect() {
 		}
 
 		log.Println("gRPC重连成功")
+
+		// 重连成功后，重新启动错误监听
+		go m.startErrorMonitoring()
+
 		return
 	}
 

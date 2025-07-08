@@ -26,18 +26,21 @@ import (
 	"github.com/komari-monitor/komari-agent/terminal"
 )
 
-// GRPCClient gRPC客户端管理器
+// GRPCClient gRPC客户端
 type GRPCClient struct {
 	conn   *grpc.ClientConn
 	client proto.MonitorServiceClient
 	stream proto.MonitorService_StreamMonitorClient
 	ctx    context.Context
 	cancel context.CancelFunc
+	errCh  chan error // 新增：错误通道，用于通知连接错误
 }
 
 // NewGRPCClient 创建新的gRPC客户端
 func NewGRPCClient() *GRPCClient {
-	return &GRPCClient{}
+	return &GRPCClient{
+		errCh: make(chan error, 1), // 缓冲通道，避免阻塞
+	}
 }
 
 // Connect 连接到gRPC服务器
@@ -107,7 +110,13 @@ func (c *GRPCClient) StartMonitorStream() error {
 // SendMonitorReport 发送监控报告
 func (c *GRPCClient) SendMonitorReport(report *proto.MonitorReport) error {
 	if c.stream == nil {
-		return fmt.Errorf("监控流未建立")
+		err := fmt.Errorf("监控流未建立")
+		// 通知上层连接异常
+		select {
+		case c.errCh <- err:
+		default:
+		}
+		return err
 	}
 
 	req := &proto.MonitorRequest{
@@ -116,13 +125,27 @@ func (c *GRPCClient) SendMonitorReport(report *proto.MonitorReport) error {
 		},
 	}
 
-	return c.stream.Send(req)
+	err := c.stream.Send(req)
+	if err != nil {
+		// 发送失败时通知上层连接异常
+		select {
+		case c.errCh <- err:
+		default:
+		}
+	}
+	return err
 }
 
 // SendPingResult 发送ping结果
 func (c *GRPCClient) SendPingResult(result *proto.PingResult) error {
 	if c.stream == nil {
-		return fmt.Errorf("监控流未建立")
+		err := fmt.Errorf("监控流未建立")
+		// 通知上层连接异常
+		select {
+		case c.errCh <- err:
+		default:
+		}
+		return err
 	}
 
 	req := &proto.MonitorRequest{
@@ -131,7 +154,15 @@ func (c *GRPCClient) SendPingResult(result *proto.PingResult) error {
 		},
 	}
 
-	return c.stream.Send(req)
+	err := c.stream.Send(req)
+	if err != nil {
+		// 发送失败时通知上层连接异常
+		select {
+		case c.errCh <- err:
+		default:
+		}
+	}
+	return err
 }
 
 // receiveMessages 接收服务器消息
@@ -140,15 +171,30 @@ func (c *GRPCClient) receiveMessages() {
 		resp, err := c.stream.Recv()
 		if err == io.EOF {
 			log.Println("gRPC流已结束")
+			// 通知上层连接断开
+			select {
+			case c.errCh <- fmt.Errorf("gRPC流正常结束"):
+			default:
+			}
 			return
 		}
 		if err != nil {
 			log.Printf("接收gRPC消息错误: %v", err)
+			// 通知上层连接出错，需要重连
+			select {
+			case c.errCh <- err:
+			default:
+			}
 			return
 		}
 
 		c.handleServerMessage(resp)
 	}
+}
+
+// GetErrorChannel 获取错误通道，用于监听连接错误
+func (c *GRPCClient) GetErrorChannel() <-chan error {
+	return c.errCh
 }
 
 // handleServerMessage 处理服务器消息
@@ -247,7 +293,13 @@ func (c *GRPCClient) Close() error {
 		c.stream.CloseSend()
 	}
 	if c.conn != nil {
-		return c.conn.Close()
+		err := c.conn.Close()
+		// 清空错误通道中的任何待处理错误
+		select {
+		case <-c.errCh:
+		default:
+		}
+		return err
 	}
 	return nil
 }
