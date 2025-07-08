@@ -211,20 +211,30 @@ func (c *GRPCClient) establishTerminalConnection(terminalID string) {
 
 // buildGRPCAddress 构建gRPC服务器地址
 func (c *GRPCClient) buildGRPCAddress() string {
-	// 移除协议前缀
-	addr := strings.TrimPrefix(flags.Endpoint, "http://")
-	addr = strings.TrimPrefix(addr, "https://")
+	addr := flags.Endpoint
+	var defaultPort string
+
+	// 根据协议确定默认端口
+	if strings.HasPrefix(addr, "https://") {
+		defaultPort = "443"
+		addr = strings.TrimPrefix(addr, "https://")
+	} else if strings.HasPrefix(addr, "http://") {
+		defaultPort = "80"
+		addr = strings.TrimPrefix(addr, "http://")
+	} else {
+		defaultPort = "25775"
+	}
 
 	// 移除尾部斜杠
 	addr = strings.TrimSuffix(addr, "/")
 
-	// nginx反向代理情况下，gRPC可以通过以下方式处理：
-	// 1. 使用相同的端口和主机，nginx通过HTTP/2协议头区分
-	// 2. 使用相同的端口，通过路径前缀区分（如 /grpc/*）
-	// 3. 使用不同的子域名（如 grpc.example.com）
+	// 检查是否已包含端口号
+	_, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// 没有端口号，添加对应协议的默认端口
+		addr = net.JoinHostPort(addr, defaultPort)
+	}
 
-	// 目前使用方式1：相同端口，nginx通过协议区分
-	// gRPC客户端会自动使用HTTP/2协议
 	return addr
 }
 
