@@ -30,6 +30,11 @@ var RootCmd = &cobra.Command{
 		if flags.IgnoreUnsafeCert {
 			http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		}
+
+		// 启动时立即上报一次基础信息
+		logger.Info("Uploading basic info on startup...")
+		server.UpdateBasicInfo()
+
 		// 自动更新
 		if !flags.DisableAutoUpdate {
 			err := update.CheckAndUpdate()
@@ -83,7 +88,7 @@ func init() {
 	RootCmd.PersistentFlags().BoolVarP(&flags.IgnoreUnsafeCert, "ignore-unsafe-cert", "u", false, "Ignore unsafe certificate errors")
 	RootCmd.PersistentFlags().IntVarP(&flags.MaxRetries, "max-retries", "r", 3, "Maximum number of retries")
 	RootCmd.PersistentFlags().IntVarP(&flags.ReconnectInterval, "reconnect-interval", "c", 5, "Reconnect interval in seconds")
-	RootCmd.PersistentFlags().IntVar(&flags.InfoReportInterval, "info-report-interval", 60, "Interval in minutes for reporting basic info")
+	RootCmd.PersistentFlags().IntVar(&flags.InfoReportInterval, "info-report-interval", 30, "Interval in minutes for reporting basic info")
 	RootCmd.PersistentFlags().Float64Var(&flags.NetworkInterval, "network-interval", 1.0, "Interval in seconds for network monitoring")
 	RootCmd.PersistentFlags().StringVar(&flags.IncludeNics, "include-nics", "", "Comma-separated list of network interfaces to include")
 	RootCmd.PersistentFlags().StringVar(&flags.ExcludeNics, "exclude-nics", "", "Comma-separated list of network interfaces to exclude")
