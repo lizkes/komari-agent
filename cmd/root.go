@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/komari-monitor/komari-agent/cmd/flags"
+	"github.com/komari-monitor/komari-agent/logger"
 	"github.com/komari-monitor/komari-agent/server"
 	"github.com/komari-monitor/komari-agent/update"
 	"github.com/spf13/cobra"
@@ -18,8 +19,12 @@ var RootCmd = &cobra.Command{
 	Short: "komari agent",
 	Long:  `komari agent`,
 	Run: func(cmd *cobra.Command, args []string) {
-		log.Println("Komari Agent", update.CurrentVersion)
-		log.Println("Github Repo:", update.Repo)
+		// 设置日志级别
+		logger.SetLevelFromString(flags.LogLevel)
+
+		logger.Info("Komari Agent %s", update.CurrentVersion)
+		logger.Info("Github Repo: %s", update.Repo)
+		logger.Info("Log Level: %s", logger.GetLevelString())
 
 		// 忽略不安全的证书
 		if flags.IgnoreUnsafeCert {
@@ -29,7 +34,7 @@ var RootCmd = &cobra.Command{
 		if !flags.DisableAutoUpdate {
 			err := update.CheckAndUpdate()
 			if err != nil {
-				log.Println("[ERROR]", err)
+				logger.Error("Auto update error: %v", err)
 			}
 			go update.DoUpdateWorks()
 		}
@@ -38,14 +43,14 @@ var RootCmd = &cobra.Command{
 		monitorManager := server.NewGRPCMonitorManager()
 		for {
 			if err := monitorManager.Start(); err != nil {
-				log.Printf("启动gRPC监控服务失败: %v", err)
-				log.Printf("等待 %d 秒后重试...", flags.ReconnectInterval)
+				logger.Error("启动gRPC监控服务失败: %v", err)
+				logger.Info("等待 %d 秒后重试...", flags.ReconnectInterval)
 				time.Sleep(time.Duration(flags.ReconnectInterval) * time.Second)
 				continue
 			}
 
 			// gRPC服务启动成功，保持运行直到出错
-			log.Println("gRPC监控服务已启动，保持运行...")
+			logger.Info("gRPC监控服务已启动，保持运行...")
 			select {} // 阻塞主goroutine，让监控服务持续运行
 		}
 	},
@@ -62,7 +67,7 @@ func Execute() {
 	}
 
 	if err := RootCmd.Execute(); err != nil {
-		log.Println(err)
+		logger.Error("Command execution error: %v", err)
 	}
 }
 
@@ -82,5 +87,6 @@ func init() {
 	RootCmd.PersistentFlags().Float64Var(&flags.NetworkInterval, "network-interval", 1.0, "Interval in seconds for network monitoring")
 	RootCmd.PersistentFlags().StringVar(&flags.IncludeNics, "include-nics", "", "Comma-separated list of network interfaces to include")
 	RootCmd.PersistentFlags().StringVar(&flags.ExcludeNics, "exclude-nics", "", "Comma-separated list of network interfaces to exclude")
+	RootCmd.PersistentFlags().StringVar(&flags.LogLevel, "log-level", "info", "Log level (info, debug)")
 	RootCmd.PersistentFlags().ParseErrorsWhitelist.UnknownFlags = true
 }

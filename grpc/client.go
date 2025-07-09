@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/komari-monitor/komari-agent/cmd/flags"
+	"github.com/komari-monitor/komari-agent/logger"
 	"github.com/komari-monitor/komari-agent/proto"
 	"github.com/komari-monitor/komari-agent/terminal"
 )
@@ -45,22 +46,61 @@ func NewGRPCClient() *GRPCClient {
 
 // Connect 连接到gRPC服务器
 func (c *GRPCClient) Connect() error {
+	startTime := time.Now()
+
 	// 解析endpoint，构建gRPC地址
 	grpcAddr := c.buildGRPCAddress()
+	logger.Info("正在连接到gRPC服务器: %s", grpcAddr)
+	logger.NetworkDiag("开始连接，目标地址: %s", grpcAddr)
+
+	// DNS解析诊断
+	host, port, err := net.SplitHostPort(grpcAddr)
+	if err != nil {
+		logger.NetworkDiag("地址解析失败: %v", err)
+		return fmt.Errorf("解析gRPC地址失败: %v", err)
+	}
+
+	logger.NetworkDiag("目标主机: %s, 端口: %s", host, port)
+
+	// 进行DNS解析测试
+	dnsStartTime := time.Now()
+	ips, err := net.LookupHost(host)
+	dnsDuration := time.Since(dnsStartTime)
+
+	if err != nil {
+		logger.NetworkDiag("DNS解析失败: %s -> %v (耗时: %v)", host, err, dnsDuration)
+		return fmt.Errorf("DNS解析失败: %v", err)
+	}
+
+	logger.NetworkDiag("DNS解析成功: %s -> %v (耗时: %v)", host, ips, dnsDuration)
+
+	// 分析IP类型
+	for i, ip := range ips {
+		if parsedIP := net.ParseIP(ip); parsedIP != nil {
+			if parsedIP.To4() != nil {
+				logger.NetworkDiag("解析结果[%d]: %s (IPv4)", i, ip)
+			} else {
+				logger.NetworkDiag("解析结果[%d]: %s (IPv6)", i, ip)
+			}
+		}
+	}
 
 	// 配置gRPC连接选项
 	var opts []grpc.DialOption
 
 	// 处理TLS证书验证
 	if flags.IgnoreUnsafeCert {
+		logger.NetworkDiag("使用不安全的TLS配置（跳过证书验证）")
 		creds := credentials.NewTLS(&tls.Config{
 			InsecureSkipVerify: true,
 		})
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 	} else if strings.HasPrefix(flags.Endpoint, "https://") {
+		logger.NetworkDiag("使用安全TLS配置")
 		creds := credentials.NewTLS(&tls.Config{})
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 	} else {
+		logger.NetworkDiag("使用非加密连接")
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 
@@ -68,27 +108,51 @@ func (c *GRPCClient) Connect() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	logger.NetworkDiag("开始建立gRPC连接，超时时间: 10秒")
+	connectStartTime := time.Now()
+
 	conn, err := grpc.DialContext(ctx, grpcAddr, opts...)
+	connectDuration := time.Since(connectStartTime)
+
 	if err != nil {
+		logger.NetworkDiag("gRPC连接建立失败: %v (耗时: %v)", err, connectDuration)
 		return fmt.Errorf("连接gRPC服务器失败: %v", err)
+	}
+
+	totalDuration := time.Since(startTime)
+	logger.NetworkDiag("gRPC连接建立成功 (连接耗时: %v, 总耗时: %v)", connectDuration, totalDuration)
+
+	// 获取连接的远程地址信息（如果可能）
+	if state := conn.GetState(); state.String() != "" {
+		logger.NetworkDiag("连接状态: %s", state.String())
 	}
 
 	c.conn = conn
 	c.client = proto.NewMonitorServiceClient(conn)
+	logger.Info("gRPC连接建立成功")
 	return nil
 }
 
 // StartMonitorStream 启动监控流
 func (c *GRPCClient) StartMonitorStream() error {
+	logger.GRPCDiag("开始启动监控流")
+
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 
+	streamStartTime := time.Now()
 	stream, err := c.client.StreamMonitor(c.ctx)
+	streamDuration := time.Since(streamStartTime)
+
 	if err != nil {
+		logger.GRPCDiag("创建监控流失败: %v (耗时: %v)", err, streamDuration)
 		return fmt.Errorf("创建监控流失败: %v", err)
 	}
+
+	logger.GRPCDiag("监控流创建成功 (耗时: %v)", streamDuration)
 	c.stream = stream
 
 	// 发送认证请求
+	logger.GRPCDiag("发送认证请求，Token前缀: %s...", safeTokenPrefix(flags.Token))
 	authReq := &proto.MonitorRequest{
 		Message: &proto.MonitorRequest_Auth{
 			Auth: &proto.AuthRequest{
@@ -97,20 +161,36 @@ func (c *GRPCClient) StartMonitorStream() error {
 		},
 	}
 
+	authStartTime := time.Now()
 	if err := stream.Send(authReq); err != nil {
+		authDuration := time.Since(authStartTime)
+		logger.GRPCDiag("发送认证请求失败: %v (耗时: %v)", err, authDuration)
 		return fmt.Errorf("发送认证请求失败: %v", err)
 	}
+	authDuration := time.Since(authStartTime)
+	logger.GRPCDiag("认证请求发送成功 (耗时: %v)", authDuration)
 
 	// 启动接收消息的goroutine
+	logger.GRPCDiag("启动消息接收goroutine")
 	go c.receiveMessages()
 
+	logger.Info("监控流启动成功")
 	return nil
+}
+
+// safeTokenPrefix 安全地获取Token前缀用于日志显示
+func safeTokenPrefix(token string) string {
+	if len(token) > 8 {
+		return token[:8]
+	}
+	return token
 }
 
 // SendMonitorReport 发送监控报告
 func (c *GRPCClient) SendMonitorReport(report *proto.MonitorReport) error {
 	if c.stream == nil {
 		err := fmt.Errorf("监控流未建立")
+		logger.GRPCDiag("发送监控报告失败: %v", err)
 		// 通知上层连接异常
 		select {
 		case c.errCh <- err:
@@ -119,19 +199,27 @@ func (c *GRPCClient) SendMonitorReport(report *proto.MonitorReport) error {
 		return err
 	}
 
+	logger.GRPCDiag("发送监控报告: 类型=%s", report.Type)
+
 	req := &proto.MonitorRequest{
 		Message: &proto.MonitorRequest_Report{
 			Report: report,
 		},
 	}
 
+	sendStartTime := time.Now()
 	err := c.stream.Send(req)
+	sendDuration := time.Since(sendStartTime)
+
 	if err != nil {
+		logger.GRPCDiag("发送监控报告失败: %v (耗时: %v)", err, sendDuration)
 		// 发送失败时通知上层连接异常
 		select {
 		case c.errCh <- err:
 		default:
 		}
+	} else {
+		logger.GRPCDiag("监控报告发送成功 (耗时: %v)", sendDuration)
 	}
 	return err
 }
@@ -167,10 +255,17 @@ func (c *GRPCClient) SendPingResult(result *proto.PingResult) error {
 
 // receiveMessages 接收服务器消息
 func (c *GRPCClient) receiveMessages() {
+	logger.GRPCDiag("消息接收goroutine已启动")
+	messageCount := 0
+
 	for {
+		recvStartTime := time.Now()
 		resp, err := c.stream.Recv()
+		recvDuration := time.Since(recvStartTime)
+
 		if err == io.EOF {
-			log.Println("gRPC流已结束")
+			logger.GRPCDiag("gRPC流正常结束 (已接收消息数: %d)", messageCount)
+			logger.Info("gRPC流已结束")
 			// 通知上层连接断开
 			select {
 			case c.errCh <- fmt.Errorf("gRPC流正常结束"):
@@ -179,7 +274,8 @@ func (c *GRPCClient) receiveMessages() {
 			return
 		}
 		if err != nil {
-			log.Printf("接收gRPC消息错误: %v", err)
+			logger.GRPCDiag("接收gRPC消息错误: %v (耗时: %v, 已接收消息数: %d)", err, recvDuration, messageCount)
+			logger.Error("接收gRPC消息错误: %v", err)
 			// 通知上层连接出错，需要重连
 			select {
 			case c.errCh <- err:
@@ -188,6 +284,8 @@ func (c *GRPCClient) receiveMessages() {
 			return
 		}
 
+		messageCount++
+		logger.GRPCDiag("接收到服务器消息 #%d (耗时: %v)", messageCount, recvDuration)
 		c.handleServerMessage(resp)
 	}
 }
@@ -202,16 +300,21 @@ func (c *GRPCClient) handleServerMessage(resp *proto.MonitorResponse) {
 	switch msg := resp.Message.(type) {
 	case *proto.MonitorResponse_AuthResponse:
 		if msg.AuthResponse.Success {
-			log.Println("gRPC认证成功")
+			logger.GRPCDiag("收到认证响应: 成功")
+			logger.Info("gRPC认证成功")
 		} else {
-			log.Printf("gRPC认证失败: %s", msg.AuthResponse.ErrorMessage)
+			logger.GRPCDiag("收到认证响应: 失败 - %s", msg.AuthResponse.ErrorMessage)
+			logger.Error("gRPC认证失败: %s", msg.AuthResponse.ErrorMessage)
 		}
 	case *proto.MonitorResponse_TaskRequest:
+		logger.GRPCDiag("收到任务请求消息")
 		c.handleTaskRequest(msg.TaskRequest)
 	case *proto.MonitorResponse_Error:
-		log.Printf("服务器错误: %s", msg.Error.Error)
+		logger.GRPCDiag("收到服务器错误消息: %s", msg.Error.Error)
+		logger.Error("服务器错误: %s", msg.Error.Error)
 	default:
-		log.Printf("未知消息类型: %T", msg)
+		logger.GRPCDiag("收到未知消息类型: %T", msg)
+		logger.Error("未知消息类型: %T", msg)
 	}
 }
 
@@ -219,18 +322,26 @@ func (c *GRPCClient) handleServerMessage(resp *proto.MonitorResponse) {
 func (c *GRPCClient) handleTaskRequest(taskReq *proto.TaskRequest) {
 	switch task := taskReq.Task.(type) {
 	case *proto.TaskRequest_Terminal:
-		log.Printf("收到终端任务: %s", task.Terminal.RequestId)
+		logger.GRPCDiag("收到终端任务: RequestId=%s", task.Terminal.RequestId)
+		logger.Info("收到终端任务: %s", task.Terminal.RequestId)
 		// 终端任务使用WebSocket连接
 		go c.establishTerminalConnection(task.Terminal.RequestId)
 
 	case *proto.TaskRequest_Exec:
-		log.Printf("收到执行任务: %s, 命令: %s", task.Exec.TaskId, task.Exec.Command)
+		logger.GRPCDiag("收到执行任务: TaskId=%s, Command=%s", task.Exec.TaskId, task.Exec.Command)
+		logger.Info("收到执行任务: %s, 命令: %s", task.Exec.TaskId, task.Exec.Command)
 		go c.executeTask(task.Exec.TaskId, task.Exec.Command)
 
 	case *proto.TaskRequest_Ping:
-		log.Printf("收到ping任务: %d, 类型: %s, 目标: %s",
+		logger.GRPCDiag("收到ping任务: TaskId=%d, Type=%s, Target=%s",
+			task.Ping.PingTaskId, task.Ping.PingType, task.Ping.PingTarget)
+		logger.Info("收到ping任务: %d, 类型: %s, 目标: %s",
 			task.Ping.PingTaskId, task.Ping.PingType, task.Ping.PingTarget)
 		go c.executePingTask(task.Ping.PingTaskId, task.Ping.PingType, task.Ping.PingTarget)
+
+	default:
+		logger.GRPCDiag("收到未知任务类型: %T", task)
+		logger.Error("未知任务类型: %T", task)
 	}
 }
 

@@ -14,4 +14,5 @@ var (
 	NetworkInterval     float64 // 新增：网络监控间隔
 	IncludeNics         string
 	ExcludeNics         string
+	LogLevel            string // 新增：日志级别
 )
